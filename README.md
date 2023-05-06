@@ -235,8 +235,8 @@ function execute(address target, bytes calldata actionData) external nonReentran
         const playerPermission = await vault.getActionId('0xd9caed12', player.address, vault.address);
 ```
 只有如上形式的actionData才能通过检查，但是要使得call方法能够调用sweepFunds函数，还需要对actionData进行编码上的补充，构建actionData的方法如下：<br>
-1）调用SelfAuthorizedVault合约中的execute函数，函数选择器为 0x1cff79cd，第一个参数为address类型的，设定为vault.address,第二个参数为calldata类型。calldata的编码为，第一个32字节存储calldata的起始位置，在起始位置处存放calldata的长度，而后再存储calldata本身的内容。考虑到selector的读取位置是0x64，可以将calldata的起始位置设置为64或者更长的位置（更长位置则中间补0）。<br>
-2）在calldata起始位置设置calldata长度，根据sweepFunds函数，对应的calldata应该包括一个函数选择器+receiver地址+token地址，长度为 0x04+0x20+0x20 = 0x44。长度设置完成后设置对应calldata内容即可。<br>
+1）调用SelfAuthorizedVault合约中的execute函数，函数选择器为 0x1cff79cd，第一个参数为address类型的，设定为vault.address,第二个参数为bytes类型。bytes的编码为，第一个32字节存储bytes的起始位置，在起始位置处存放bytes的长度，而后再存储bytes本身的内容。考虑到selector的读取位置是0x64，可以将bytes的起始位置设置为64或者更长的位置（更长位置则中间补0）。<br>
+2）在bytes起始位置设置bytes长度，根据sweepFunds函数，对应的bytes应该包括一个函数选择器+receiver地址+token地址，长度为 0x04+0x20+0x20 = 0x44。长度设置完成后设置对应bytes内容即可。<br>
 3）构建actionData完成后使用EOA账户发送交易到SelfAuthorizedVault合约完成攻击。
 
          

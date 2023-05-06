@@ -146,10 +146,97 @@ Challenge #11 - Backdoor
 攻击目标:拿走registry合约中的所有DVT token <br>
 初始条件：无 <br>
 合约分析：需要熟悉Gnosis钱包的创建流程，用户通过GnosisSafeProxyFactory合约中的createProxyWithCallback函数创建代理合约，在代理合约创建完后会调用WalletRegistry合约中的proxyCreated函数，通过系列检查后将给对应的钱包派发DVT奖励。
-在使用createProxyWithCallback函数进行代理合约的创建时，会在代理合约中使用call方法调用initializer完成代理合约的初始化，随后调用callback地址上的proxyCreated函数进行初始化检查并完成相关操作，如果能在initializer中完成钱包对攻击地址的DVT授权，便可以在钱包完成初始化，通过callback函数检查后将奖励的DVT token转移到攻击者账户，完成攻击。
+在使用createProxyWithCallback函数进行代理合约的创建时，会在代理合约中使用call方法调用initializer完成代理合约的初始化，随后调用callback地址上的proxyCreated函数进行初始化检查并完成相关操作，如果能在initializer中完成钱包对攻击地址的DVT授权，便可以在钱包完成初始化，通过callback函数检查后将奖励的DVT token转移到攻击者账户，完成攻击。<br>
 
+Challenge #12 - Climber
+-
+攻击目标:TODO<br>
+初始条件：无 <br>
+合约分析：TODO
 
+Challenge #13 - Wallet Mining
+-
+攻击目标：1、拿走0x9b6fb606a9f5789444c17768c6dfcf2f83563801地址上的token。<br>
+         2、拿走所有代理合约中奖励的token。<br>
+初始条件: 无 <br>
+合约分析：1、攻击1为去年4000WOP代币事故的改版。要在未部署Gnosis工厂合约以及逻辑合约的链上获得未初始化地址中的token，首先需要重放交易，将工厂合约以及master逻辑合约部署在链上，重放交易需要交易不涉及chainID字段，且重放部署合约的费用也由最初链上的部署地址支付。因此，完成攻击目标1需要的步骤为：
+a) 获得Gnosis链上真实合约的部署代码（工厂合约以及master逻辑合约）以及部署合约的外部账户地址。
+b) 利用链上代码重放交易，完成合约部署。
+c) 使用Factory工厂合约中的createProxy函数，找到产生0x9b6fb606a9f5789444c17768c6dfcf2f83563801地址代理合约对应的nonce，在创建代理合约时候可以对合约进行初始化，在此过程中获得合约的一些权限完成攻击1。<br>
+        2、攻击2需要拿走代理合约中被奖励的token，具体来说，要产生0x9b6fb606a9f5789444c17768c6dfcf2f83563801特定地址代理合约需要不断地在工厂合约中新创建代理合约，因此在产生特定地址之前会不断地创建代理合约，这些代理合约会获得DVT奖励，攻击2的目标是把这些奖励也转移到攻击者账户。奖励发放的逻辑在WalletDeployer合约中的drop函数实现:<br>
+ ```solidity
+     function drop(bytes memory wat) external returns (address aim) {
+        aim = fact.createProxy(copy, wat);
+        if (mom != address(0) && !can(msg.sender, aim)) {
+            revert Boom();
+        }
+        IERC20(gem).transfer(msg.sender, pay);
+    }
+```
+具体来说，需要WalletDeployer合约中的can函数返回true才可以向msg.sender转出DVT。can函数是一段内联汇编函数，逐行解读一下can函数：
+```solidity
+        let m := sload(0) //读取WalletDeployer合约中第0个slot中的内容，const以及immutable类型都不会分配slot进行存储，因此此时m读到的为变量mom。
+        if iszero(extcodesize(m)) {return(0, 0)}//判断mom对应的地址是否为合约，即是否存在代码，如果是非合约地址则return。
+        let p := mload(0x40) //读取memory 0x40处32字节内容，即内存指针的值
+        mstore(0x40,add(p,0x44)) //内存指针长度增加0x44，即分配0x44长度的内存空间
+        mstore(p,shl(0xe0,0x4538c4eb)) // 将0x4538c4eb左移 0xe0位，存到指针位置
+        mstore(add(p,0x04),u) //写入 u至memory，即drop函数中的msg.sender
+        mstore(add(p,0x24),a) //写入 a至memory，即drop函数中的aim
+        if iszero(staticcall(gas(),m,p,0x44,p,0x20)) {return(0,0)} //staticall mom地址，参数为0x4538c4eb + 地址u + 地址a，如果返回为1则通过检查，第五个参数p为函数返回值其实地址，第六个参数为返回值长度，即返回值为p处开始往后32字节长度
+        if and(not(iszero(returndatasize())), iszero(mload(p))) {return(0,0)} // not(iszero(returndatasize()))，iszero(mload(p))，这两个布尔值不能同时为1
+```
+mom合约就是AuthorizerUpgradeable代理合约，0x4538c4eb是AuthorizerUpgradeable合约中can函数的函数选择器，即WalletDeployer合约调用了AuthorizerUpgradeable合约中的can函数来判断调用WalletDeployer合约的msg.sender是否符合要求，如果符合要求，便转账给WalletDeployer合约的调用者DVT。只有staticcall返回为1的时候，才能通过检查，而staticcall只要没有revert就默认调用成功返回success，即便函数不存在，也会返回success。所以如果staticcall调用成功，那么返回值不为0，而且返回值的size也不会0，所以最后的and语句为0，可以通过检查。<br>
+如何使得staticcall能通过检查，如果能控制逻辑合约，使得逻辑合约自毁，当逻辑合约不存在时，staticcall将通过检查。<br>
+查看测试脚本，可以发现
+```javaScript
+        // Deploy authorizer with the corresponding proxy
+        authorizer = await upgrades.deployProxy(
+            await ethers.getContractFactory('AuthorizerUpgradeable', deployer),
+            [ [ ward.address ], [ DEPOSIT_ADDRESS ] ], // initialization data
+            { kind: 'uups', initializer: 'init' }
+        );
+```
+在初始化阶段，仅仅只对代理合约进行了初始化，而逻辑合约是没有被初始化的，初始化函数中将函数调用者设定为了合约的owner。成为逻辑合约owner以后，可以调用upgradeToAndCall函数通过delegatecall的方式调用攻击合约来完成逻辑合约的自毁，此后再调用WalletDeployer合约中的drop函数能顺利通过staticcall，获得所有钱包的DVT。完成攻击2的步骤为：<br>
+a) 拿到逻辑合约地址（UUPS代理模式下逻辑合约地址存储在固定的slot）初始化逻辑合约，获得owner权限。<br>
+b) 利用owner权限调用upgradeToAndCall函数，通过攻击合约完成逻辑合页的自毁。<br>
+c) 调用43次drop函数获取DVT，完成攻击2。<br>
 
+Challenge #14 - Puppet V3
+-
+攻击目标: 拿走pool中所有token<br>
+初始条件：1ETH 110DVT <br>
+合约分析：同Puppet V1、Puppet V2，Puppet V3也是完成预言机的价格操作，与V1、V2不同的除了uniswap本身接口的改变，还有预言机机制的变化。V3中预言机价格的时间离散性更弱，安全性增强，具体表现为完成代币交换以后，价格需要一定时间才能回归到当前代币池中按照AMM进行瞬时计算的价格。因此如果要完成对应攻击，在调用对应接口完成代币交换后，需要等待一段时间，再进行PuppetV3Pool合约中borrow函数的调用完成攻击。<br>
 
+Challenge #15 - ABI Smuggling
+-
+攻击目标: 将vault中的DVT转移到recovery账户<br>
+初始条件：1ETH 110DVT <br>
+合约分析：SelfAuthorizedVault合约中存在两个函数能够拿到DVT，withdraw函数单次可以拿回一个DVT，sweepFunds函数可以一次性拿走所有的DVT。在AuthorizedExecutor合约中，execute函数可以通过call方法进行函数调用<br>
+```solidity
+function execute(address target, bytes calldata actionData) external nonReentrant returns (bytes memory) {
+        // Read the 4-bytes selector at the beginning of `actionData`
+        bytes4 selector;
+        uint256 calldataOffset = 4 + 32 * 3; // calldata position where `actionData` begins
+        assembly {
+            selector := calldataload(calldataOffset)
+        }
+
+        if (!permissions[getActionId(selector, msg.sender, target)]) {
+            revert NotAllowed();
+        }
+
+        _beforeFunctionCall(target, actionData);
+
+        return target.functionCall(actionData);
+    }
+```
+分析execute函数，selector在actionData的固定位置读取，读取的selector需要通过permissions检查，在合约部署脚本中，和攻击账户有关的permissions设置为:<br>
+```javaScript
+        const playerPermission = await vault.getActionId('0xd9caed12', player.address, vault.address);
+```
+只有如上形式的actionData才能通过检查，但是要使得call方法能够调用sweepFunds函数，还需要对actionData进行编码上的补充，构建actionData的方法如下：<br>
+1）调用SelfAuthorizedVault合约中的execute函数，函数选择器为 0x1cff79cd，第一个参数为address类型的，设定为vault.address,第二个参数为calldata类型。calldata的编码为，第一个32字节存储calldata的起始位置，在起始位置处存放calldata的长度，而后再存储calldata本身的内容。考虑到selector的读取位置是0x64，可以将calldata的起始位置设置为64或者更长的位置（更长位置则中间补0）。<br>
+2）在calldata起始位置设置calldata长度，根据sweepFunds函数，对应的calldata应该包括一个函数选择器+receiver地址+token地址，长度为 0x04+0x20+0x20 = 0x44。长度设置完成后设置对应calldata内容即可。<br>
+3）构建actionData完成后使用EOA账户发送交易到SelfAuthorizedVault合约完成攻击。
 
          
